@@ -66,3 +66,13 @@ For bootstrap project:
 ```
 $ cdk bootstrap
 ```
+
+For deploying project:
+```
+$ cdk deploy
+```
+
+For destroying project and deleting all resources:
+```
+$ cdk destroy
+```
