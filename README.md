@@ -56,3 +56,13 @@ command.
  * `cdk docs`        open CDK documentation
 
 Enjoy!
+
+If AWS configuration required:
+```
+$ aws configure
+```
+
+For bootstrap project:
+```
+$ cdk bootstrap
+```
