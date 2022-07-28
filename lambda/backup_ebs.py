@@ -2,10 +2,24 @@ import boto3
 
 
 def handler(event, context):
+    print('[event]', event)
+    print('[context]', context)
+
     ec2 = boto3.client('ec2')
 
+    params = event["queryStringParameters"]
+
+    filters = [{'Name': 'status', 'Values': ['in-use']}]
+
+    if params:
+        if "instance_id" in params.keys() and params["instance_id"]:
+            filters.append({'Name': 'attachment.instance-id', 'Values': [params["instance_id"]]})
+        if "volume_id" in params.keys() and params["volume_id"]:
+            filters.append({'Name': 'volume-id', 'Values': [params["volume_id"]]})
+
     # Get all volumes
-    result = ec2.describe_volumes(Filters=[{'Name': 'status', 'Values': ['in-use']}])
+    print('[filters]', filters)
+    result = ec2.describe_volumes(Filters=filters)
     print("available volumes")
     print(result)
 
