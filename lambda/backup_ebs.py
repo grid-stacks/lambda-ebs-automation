@@ -33,11 +33,131 @@ def wait_volume_modified(client, volume_id):
     return True
 
 
+def get_main_disk(ssm, instance_id, fs):
+    print('[instance]', instance_id)
+
+    response = ssm.send_command(
+        InstanceIds=(instance_id,),
+        DocumentName="AWS-RunShellScript",
+        DocumentVersion='$LATEST',
+        Comment='Getting main driver from lambda',
+        Parameters={
+            'commands': ["df " + fs + " | awk '{print $1}'"]
+        },
+    )
+
+    command_id = response["Command"]["CommandId"]
+    print('[command id]', command_id)
+
+    keep_waiting = None
+    while keep_waiting is None:
+        command_resp = ssm.list_commands(CommandId=command_id)
+        if command_resp['Commands'][0]['Status'] == "InProgress" or command_resp['Commands'][0]['Status'] == "Pending":
+            time.sleep(1)
+        else:
+            keep_waiting = 1
+
+    output = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+
+    while output["Status"] == "InProgress":
+        print('[progress status]', output['Status'])
+        output = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+
+    print('[complete status]', output['Status'], output["StandardOutputContent"])
+
+    chunks = output["StandardOutputContent"].split('\n')
+    print('[chunks]', chunks)
+
+    disk_name = chunks[1]
+    print('[disk]', disk_name)
+
+    return disk_name
+
+
+def extend_disk(ssm, instance_id, disk_name):
+    print('[grow instance]', instance_id)
+    print('[extending]', disk_name)
+
+    response = ssm.send_command(
+        InstanceIds=(instance_id,),
+        DocumentName="AWS-RunShellScript",
+        DocumentVersion='$LATEST',
+        Comment='Extending disk from lambda',
+        Parameters={
+            'commands': ["sudo resize2fs " + disk_name]
+        },
+    )
+
+    command_id = response["Command"]["CommandId"]
+    print('[grow command id]', command_id)
+
+    keep_waiting = None
+    while keep_waiting is None:
+        command_resp = ssm.list_commands(CommandId=command_id)
+        if command_resp['Commands'][0]['Status'] == "InProgress" or command_resp['Commands'][0]['Status'] == "Pending":
+            time.sleep(1)
+        else:
+            keep_waiting = 1
+
+    output = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+
+    while output["Status"] == "InProgress":
+        print('[progress status]', output['Status'])
+        output = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+
+    print('[grow complete status]', output['Status'], output["StandardOutputContent"])
+
+    if output['Status'] == "Success":
+        return True
+    else:
+        return False
+
+
+def extend_partition(ssm, instance_id, fs):
+    print('[partition instance]', instance_id)
+    print('[partition]', fs)
+
+    response = ssm.send_command(
+        InstanceIds=(instance_id,),
+        DocumentName="AWS-RunShellScript",
+        DocumentVersion='$LATEST',
+        Comment='Extending partition from lambda',
+        Parameters={
+            'commands': ["sudo xfs_growfs -d " + fs]
+        },
+    )
+
+    command_id = response["Command"]["CommandId"]
+    print('[partition command id]', command_id)
+
+    keep_waiting = None
+    while keep_waiting is None:
+        command_resp = ssm.list_commands(CommandId=command_id)
+        if command_resp['Commands'][0]['Status'] == "InProgress" or command_resp['Commands'][0]['Status'] == "Pending":
+            time.sleep(1)
+        else:
+            keep_waiting = 1
+
+    output = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+
+    while output["Status"] == "InProgress":
+        print('[progress status]', output['Status'])
+        output = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+
+    print('[partition complete status]', output['Status'], output["StandardOutputContent"])
+
+    if output['Status'] == "Success":
+        return True
+    else:
+        return False
+
+
 def handler(event, context):
     print('[event]', event)
     print('[context]', context)
 
     ec2 = boto3.client('ec2')
+    ssm = boto3.client('ssm')
 
     params: dict = event["queryStringParameters"]
 
@@ -128,5 +248,22 @@ def handler(event, context):
             wait_volume_modified(ec2, volume_id)
         else:
             return {'statusCode': 400, 'headers': {'Content-Type': 'text/plain'}, 'body': extended["message"]}
+
+        try:
+            disk_to_extend = get_main_disk(ssm, instance_id, "/")
+
+            if disk_to_extend:
+                disk_extended = extend_disk(ssm, instance_id, disk_to_extend)
+
+                if disk_extended:
+                    extend_partition(ssm, instance_id, "/")
+
+        except Exception as e:
+            print(f'[error] Unable to get main disk. Exception: {e}')
+            return {
+                'statusCode': 400,
+                'headers': {'Content-Type': 'text/plain'},
+                'body': f"Unable to get main disk. Exception: {e}"
+            }
 
     return {'statusCode': 200, 'headers': {'Content-Type': 'text/plain'}, 'body': 'Snapshot created successfully'}
