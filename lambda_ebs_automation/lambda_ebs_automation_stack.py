@@ -34,6 +34,13 @@ class LambdaEbsAutomationStack(Stack):
             actions=["ec2:Describe*"],
             resources=["*"]
         ))
+        backup_ebs_role.add_to_policy(_iam.PolicyStatement(
+            actions=["ssm:*"],
+            resources=[
+                "arn:aws:ec2:*:*:*",
+                "arn:aws:ssm:*:*:*"
+            ]
+        ))
 
         backup_ebs_lambda = _lambda.Function(self, 'BackupEbsHandler', runtime=_lambda.Runtime.PYTHON_3_9,
                                              code=_lambda.Code.from_asset('lambda'), handler='backup_ebs.handler',
