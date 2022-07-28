@@ -1,4 +1,4 @@
-from aws_cdk import (Duration, Stack, aws_lambda as _lambda, aws_iam as _iam, )
+from aws_cdk import (Duration, Stack, aws_lambda as _lambda, aws_iam as _iam, aws_apigateway as _api )
 from constructs import Construct
 
 
@@ -38,3 +38,5 @@ class LambdaEbsAutomationStack(Stack):
         backup_ebs_lambda = _lambda.Function(self, 'BackupEbsHandler', runtime=_lambda.Runtime.PYTHON_3_9,
                                              code=_lambda.Code.from_asset('lambda'), handler='backup_ebs.handler',
                                              timeout=Duration.minutes(15), role=backup_ebs_role)
+
+        _api.LambdaRestApi(self, 'BackupEbsApi', handler=backup_ebs_lambda)
