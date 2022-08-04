@@ -4,12 +4,26 @@ import boto3
 
 
 def get_ebs_volume_size(client, volume_id):
+    """
+    Returns disk size of given ebs volume
+
+    :param client: boto3 ec2 client
+    :param volume_id: id of volume of which size is getting
+    """
     response = client.describe_volumes(VolumeIds=[volume_id])['Volumes'][0]['Size']
     print('[volume_id] [size]', response)
     return response
 
 
 def extend_volume(client, volume_id, new_size):
+    """
+    Extend ebs volume to specified size
+
+    :param client: boto3 ec2 client
+    :param volume_id: id of volume which is extending
+    :param new_size: size to be extending
+    """
+
     print(f'[extending] Going to extend volume {volume_id} to {new_size}G')
     try:
         client.modify_volume(
@@ -23,6 +37,13 @@ def extend_volume(client, volume_id, new_size):
 
 
 def wait_volume_modified(client, volume_id):
+    """
+    Check whether the volume is back in optimizing or completed state after extending
+
+    :param client: boto3 ec2 client
+    :param volume_id: id of volume which is checking for completion
+    """
+
     available_states = ["optimizing", "completed"]
     state = ""
     while state not in available_states:
@@ -34,6 +55,14 @@ def wait_volume_modified(client, volume_id):
 
 
 def get_main_disk(ssm, instance_id, fs):
+    """
+    Run command in ec2 linux instance and return attached main ebs disk
+
+    :param ssm: boto3 ssm client
+    :param instance_id: id of instance of which main disk is returning
+    :param fs: root path
+    """
+
     print('[instance]', instance_id)
 
     response = ssm.send_command(
@@ -75,6 +104,14 @@ def get_main_disk(ssm, instance_id, fs):
 
 
 def extend_disk(ssm, instance_id, disk_name):
+    """
+    Run command in ec2 linux instance and extend disk
+
+    :param ssm: boto3 ssm client
+    :param instance_id: id of instance of which main disk is extending
+    :param disk_name: name of disk to be extending
+    """
+
     print('[grow instance]', instance_id)
     print('[extending]', disk_name)
 
@@ -114,6 +151,14 @@ def extend_disk(ssm, instance_id, disk_name):
 
 
 def extend_partition(ssm, instance_id, fs):
+    """
+    Run command in ec2 linux instance and extend partition
+
+    :param ssm: boto3 ssm client
+    :param instance_id: id of instance of which disk partition is extending
+    :param fs: partition path to be extending
+    """
+
     print('[partition instance]', instance_id)
     print('[partition]', fs)
 
@@ -153,18 +198,30 @@ def extend_partition(ssm, instance_id, fs):
 
 
 def handler(event, context):
+    """
+    Main lambda handler
+    """
+
     print('[event]', event)
     print('[context]', context)
 
     ec2 = boto3.client('ec2')
     ssm = boto3.client('ssm')
 
+    # If we invoke lambda from aws api gateway and pass query parameters,
+    # then the params will be in 'queryStringParameters' of event dictionary
+    # We will pass three query params: inc, instance_id and volume_id
     params: dict = event["queryStringParameters"]
 
+    # We can pass percentage of disk size increment
+    # If not passed, then default increment will be 10%
     inc = params["inc"] if "inc" in params.keys() and params["inc"] else 10
 
+    # Starting ebs disk filtering
+    # We will filter disks which are in 'in-use' status only
     filters = [{'Name': 'status', 'Values': ['in-use']}]
 
+    # Additional filtering will be added if instance_id and volume_id is passed
     if params:
         if "instance_id" in params.keys() and params["instance_id"]:
             filters.append({'Name': 'attachment.instance-id', 'Values': [params["instance_id"]]})
@@ -186,6 +243,7 @@ def handler(event, context):
             'body': f"Unable to filter volumes. Exception: {e}"
         }
 
+    # Looping all available volumes, taking snapshots and extending them
     for volume in result['Volumes']:
         volume_id = volume['VolumeId']
         instance_id = volume['Attachments'][0]['InstanceId']
@@ -229,6 +287,7 @@ def handler(event, context):
                 'body': f"Unable to process snapshot. Exception: {e}"
             }
 
+        # Getting ebs volume size
         try:
             volume_size = get_ebs_volume_size(ec2, volume_id)
         except Exception as e:
@@ -242,20 +301,25 @@ def handler(event, context):
         new_volume_size = int(volume_size * (1 + inc / 100))
         print('[new volume size]', new_volume_size)
 
+        # Extending volume
         extended = extend_volume(ec2, volume_id, new_volume_size)
 
         if extended["success"]:
+            # Wait for volume extending confirmation
             wait_volume_modified(ec2, volume_id)
         else:
             return {'statusCode': 400, 'headers': {'Content-Type': 'text/plain'}, 'body': extended["message"]}
 
         try:
+            # Get root disk in linux to extend
             disk_to_extend = get_main_disk(ssm, instance_id, "/")
 
             if disk_to_extend:
+                # Extending the disk in linux
                 disk_extended = extend_disk(ssm, instance_id, disk_to_extend)
 
                 if disk_extended:
+                    # Extending partition
                     extend_partition(ssm, instance_id, "/")
 
         except Exception as e:
