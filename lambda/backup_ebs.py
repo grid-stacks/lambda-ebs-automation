@@ -1,6 +1,7 @@
 import time
 
 import boto3
+import botocore
 
 
 def get_ebs_volume_size(client, volume_id):
@@ -260,6 +261,26 @@ def handler(event, context):
                 'headers': {'Content-Type': 'text/plain'},
                 'body': f"Unable to create snapshot. Exception: {e}"
             }
+
+        try:
+            snapshot_id = res['SnapshotId']
+            snapshot_complete_waiter = ec2.get_waiter('snapshot_completed')
+            snapshot_complete_waiter.wait(SnapshotIds=[snapshot_id])
+        except botocore.exceptions.WaiterError as e:
+            if "max attempts exceeded" in e.message:
+                print(f'[error] Snapshot not completed. Exception: {e}')
+                return {
+                    'statusCode': 400,
+                    'headers': {'Content-Type': 'text/plain'},
+                    'body': f"Snapshot not completed. Exception: {e}"
+                }
+            else:
+                print(f'[error] Unable to wait. Exception: {e}')
+                return {
+                    'statusCode': 400,
+                    'headers': {'Content-Type': 'text/plain'},
+                    'body': f"Unable to wait. Exception: {e}"
+                }
 
         # Get snapshot resource
         try:
